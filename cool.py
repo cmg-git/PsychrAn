@@ -52,9 +52,9 @@ Constant Air Volume (CAV): linear control problem
 
 Inputs:
 θo, φo      outdoor temperature & humidity ratio (=o=)
-θIsp, φIsp  indoor temperature & humidity ratio set points (<-θI, <-φI)
+θ5sp, φ5sp  indoor temperature & humidity ratio set points (<-θI, <-φI)
 mi          infiltration mass flow rate (<-mi)
-Qsa, Qla    auxiliary sensible and latent loads ([BL] sl)
+QsBL, QlBL    auxiliary sensible and latent loads ([BL] sl)
 
 Parameters:
 m           mass flow rate of dry air
@@ -146,12 +146,13 @@ import numpy as np
 import pandas as pd
 import psychro as psy
 
+
 # constants
 c = 1e3         # J/kg K, air specific heat
 l = 2496e3      # J/kg, latent heat
 
 # to be used in self.m_ls / least_squares
-m_max = 100     # ks/s, max dry air mass flow rate
+m_max = 100     # ks/s, max dry air mass flow rat
 θs_0 = 5        # °C, initial guess for saturation temperature
 
 
@@ -163,14 +164,14 @@ class MxCcRhTzBl:
 
     def __init__(self, parameters, inputs):
         m, mo, β, Kθ, Kw = parameters
-        θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla = inputs
+        θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL = inputs
 
         self.design = np.array([m, mo, β, Kθ, Kw,       # parameters
-                                θo, φo, θIsp, φIsp,     # inputs air out, in
-                                mi, UA, Qsa, Qla])      # --"--  building
+                                θo, φo, θ5sp, φ5sp,     # inputs air out, in
+                                mi, UA, QsBL, QlBL])      # --"--  building
         self.actual = np.array([m, mo, β, Kθ, Kw,
-                                θo, φo, θIsp, φIsp,
-                                mi, UA, Qsa, Qla])
+                                θo, φo, θ5sp, φ5sp,
+                                mi, UA, QsBL, QlBL])
 
     def lin_model(self, θs0):
         """
@@ -192,7 +193,7 @@ class MxCcRhTzBl:
 
         Model parameters and inputs from object
         ---------------------
-        m, mo, θo, φo, θIsp, φIsp, β, mi, UA, Qsa, Qla = self.actual
+        m, mo, θo, φo, θ5sp, φ5sp, β, mi, UA, QsBL, QlBL = self.actual
 
 
         - m           mass flow rate of dry air
@@ -201,11 +202,11 @@ class MxCcRhTzBl:
 
         - θo, φo      outdoor temperature & humidity ratio
 
-        - θIsp, φIsp  indoor temperature & humidity ratio set points
+        - θ5sp, φ5sp  indoor temperature & humidity ratio set points
 
         - mi          infiltration mass flow rate
 
-        - Qsa, Qla    auxiliary sensible and latent loads
+        - QsBL, QlBL    auxiliary sensible and latent loads
 
         - β           by-pass factir od cooling coil
 
@@ -247,13 +248,13 @@ class MxCcRhTzBl:
                              |                |<------[Kw]---------+<-wI<-φI
                              |<-----------------------[Kθ]---------+<-θI
         """
-        m, mo, β, Kθ, Kw, θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla = self.actual
+        m, mo, β, Kθ, Kw, θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL = self.actual
         wo = psy.w(θo, φo)      # humidity. out
 
         A = np.zeros((16, 16))  # matrix of coefficents of unknowns
         b = np.zeros(16)        # vector of inputs
 
-        # MR1
+        # MR
         A[0, 0], A[0, 8], b[0] = m * c, -(m - mo) * c, mo * c * θo
         A[1, 1], A[1, 9], b[1] = m * l, -(m - mo) * l, mo * l * wo
         # CC
@@ -276,12 +277,13 @@ class MxCcRhTzBl:
         A[10, 6], A[10, 8], A[10, 14], b[10] = m * c, -m * c, 1, 0
         A[11, 7], A[11, 9], A[11, 15], b[11] = m * l, -m * l, 1, 0
         # BL
-        A[12, 8], A[12, 14], b[12] = (UA + mi * c), 1, (UA + mi * c) * θo + Qsa
-        A[13, 9], A[13, 15], b[13] = mi * l, 1, mi * l * wo + Qla
+        A[12, 8], A[12, 14], b[12] = (UA + mi * c), 1,\
+            (UA + mi * c) * θo + QsBL
+        A[13, 9], A[13, 15], b[13] = mi * l, 1, mi * l * wo + QlBL
         # Kθ indoor temperature controller
-        A[14, 8], A[14, 10], b[14] = Kθ, 1, Kθ * θIsp
+        A[14, 8], A[14, 10], b[14] = Kθ, 1, Kθ * θ5sp
         # Kw indoor humidity ratio controller
-        A[15, 9], A[15, 13], b[15] = Kw, 1, Kw * psy.w(θIsp, φIsp)
+        A[15, 9], A[15, 13], b[15] = Kw, 1, Kw * psy.w(θ5sp, φ5sp)
 
         x = np.linalg.solve(A, b)
         return x
@@ -306,11 +308,17 @@ class MxCcRhTzBl:
         x of *self.lin_model(self, θs0)*
         """
         ε = 0.01e-3     # admisible error for ws
-        Δ_ws = 2 * ε    # kg/kg, initial difference to start the iterations
-        while Δ_ws > ε:
+        # Δ_ws = 2 * ε    # kg/kg, initial difference to start the iterations
+        # while Δ_ws > ε:
+        #     x = self.lin_model(θs0)
+        #     Δ_ws = abs(psy.w(x[2], 1) - x[3])   # psy.w(θs, 1) = ws
+        #     θs0 = x[2]                          # actualize θs0
+        while True:
             x = self.lin_model(θs0)
             Δ_ws = abs(psy.w(x[2], 1) - x[3])   # psy.w(θs, 1) = ws
             θs0 = x[2]                          # actualize θs0
+            if Δ_ws < ε:
+                break
         return x
 
     def m_ls(self, value, sp):
@@ -359,29 +367,29 @@ class MxCcRhTzBl:
 
             Returns
             -------
-            ε = value - sp: difference between value and its set point
+            ε = |value - sp|: abs. difference between value and its set point
             """
             self.actual[0] = m
             x = self.solve_lin(θs_0)
-            if value == 'θS':
+            if value == 'θ4':
                 θS = x[6]       # supply air
                 return abs(sp - θS)
-            elif value == 'φI':
+            elif value == 'φ5':
                 wI = x[9]       # indoor air
                 return abs(sp - wI)
             else:
-                print('ERROR in ε(m): value not in {"θS", "wI"}')
+                print('ERROR in ε(m): value not in {"θ5", "φ5"}')
 
         m0 = self.actual[0]     # initial guess
-        if value == 'φI':
-            self.actual[4] = 0
-            sp = psy.w(self.actual[7], sp)
-        # gives m for min(θSsp - θS); θs_0 is the initial guess of θs
+        if value == 'φ5':
+            self.actual[4] = 0  # Kw = 0; no reheating
+            sp = psy.w(self.actual[7], sp)  # w5 = f(θ5, φ5)
+        # gives m for min(θSsp - θS); m0 is the initial guess of m
+        # min ε(m) subject to 0 < m < m_max; m0 initial guess
         res = least_squares(ε, m0, bounds=(0, m_max))
 
-        if res.cost < 0.1e-3:
-            m = float(res.x)
-            # print(f'm = {m: 5.3f} kg/s')
+        if res.cost < 0.1e-3:   # res.cost = min ε(m) s.t. 0 < m < m_max
+            m = float(res.x)    # res.x = arg min ε(m) s.t. 0 < m < m_max
         else:
             print('RecAirVAV: No solution for m')
 
@@ -434,26 +442,26 @@ class MxCcRhTzBl:
             """
             self.actual[2] = β
             x = self.solve_lin(θs_0)
-            if value == 'θS':
+            if value == 'θ5':
                 θS = x[6]       # supply air
                 return abs(sp - θS)
-            elif value == 'φI':
+            elif value == 'φ5':
                 wI = x[9]       # indoor air
                 return abs(sp - wI)
             else:
                 print('ERROR in ε(β): value not in {"θS", "wI"}')
 
-        β0 = self.actual[2]     # initial guess
-        β0 = 0.1
-        if value == 'φI':
+        # β0 = self.actual[2]     # initial guess
+        β0 = 0.1                # initial guess
+        if value == 'φ5':
             self.actual[4] = 0
             sp = psy.w(self.actual[7], sp)
-        # gives m for min(θSsp - θS); θs_0 is the initial guess of θs
+        # gives β for min(θSsp - θS); β0 is the initial guess of β
+        # min ε(β) subject to 0 < β < 1; β0 initial guess
         res = least_squares(ε, β0, bounds=(0, 1))
 
-        if res.cost < 1e-5:
-            β = float(res.x)
-            # print(f'm = {m: 5.3f} kg/s')
+        if res.cost < 1e-5:     # res.cost = min ε(β) s.t. 0 < β < 1
+            β = float(res.x)    # res.x = arg min ε(β) s.t. 0 < β < 1
         else:
             print('RecAirVBP: No solution for β')
 
@@ -482,13 +490,19 @@ class MxCcRhTzBl:
         # Points: O, s, S, I
         θ = np.append(θo, x[0:10:2])
         w = np.append(wo, x[1:10:2])
-        # Points       O   s   S   I     Elements
-        A = np.array([[-1, 1, 0, 0, 0, 1],      # MX1
+        # Points       o   1  2  3  4  5        Elements
+        A = np.array([[-1, 1, 0, 0, 0, 1],      # MR
                       [0, -1, 1, 0, 0, 0],      # CC
-                      [0, 0, -1, 1, -1, 0],     # MX2
+                      [0, -1, 1, 1, 0, 0],     # MX
                       [0, 0, 0, -1, 1, 0],      # HC
                       [0, 0, 0, 0, -1, 1]])     # TZ
-        psy.chartA(θ, w, A)
+
+        on_psy_chart = all(-10 < θ_value < 50 for θ_value in θ)
+        on_psy_chart &= all(0 < w_value < 0.65 for w_value in w)
+        if on_psy_chart:
+            psy.chartA(θ, w, A)
+        else:
+            print('Values out of the phychroetric chart')
 
         θ = pd.Series(θ)
         w = 1000 * pd.Series(w)         # kg/kg -> g/kg
@@ -509,8 +523,8 @@ class MxCcRhTzBl:
         print(Q.to_frame().T / 1000, 'kW')
         return None
 
-    def CAV_wd(self, θo=32, φo=0.5, θIsp=26, φIsp=0.5,
-               mi=1.35, UA=675, Qsa=34_000, Qla=4_000):
+    def CAV_wd(self, θo=32, φo=0.7, θ5sp=24, φ5sp=0.5,
+               mi=0.90, UA=690, QsBL=18_000, QlBL=2_500):
         """
         Constant air volume (CAV) to be used in Jupyter with widgets
 
@@ -524,20 +538,84 @@ class MxCcRhTzBl:
         # To use fewer variables in Jupyter widget:
         # select what to be updated in self.actual, e.g.:
         # self.actual[[0, 1, 2, 5, 6]] = m, θo, φo, 1000 * QsTZ, 1000 * QlTZ
-        self.actual[5:] = np.array([θo, φo, θIsp, φIsp,
-                                    mi, UA, Qsa, Qla])
-        # self.actual[5:] = θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla
+        self.actual[5:] = np.array([θo, φo, θ5sp, φ5sp,
+                                    mi, UA, QsBL, QlBL])
+        # self.actual[5:] = θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL
 
         θ0 = 40
         x = self.solve_lin(θ0)
         # print(f'm = {self.actual[0]: .3f} kg/s,\
         #       mo = {self.actual[1]: .3f} kg/s')
-        print('m = {m: .3f} kg/s, mo = {mo: .3f} kg/s'.format(
-            m=self.actual[0], mo=self.actual[1]))
+        print('m = {m: .3f} kg/s, mo = {mo: .3f} kg/s, β = {β: .3f}'.format(
+            m=self.actual[0], mo=self.actual[1], β=self.actual[2]))
         self.psy_chart(x, self.actual[5], self.actual[6])
 
-    def VAV_wd(self, value='θS', sp=18, θo=32, φo=0.5, θIsp=24, φIsp=0.5,
-               mi=1.35, UA=675, Qsa=34_000, Qla=4_000):
+    def VBP_wd(self, value='φ5', sp=0.5, θo=32, φo=0.5, θ5sp=24, φ5sp=0.5,
+               mi=1.35, UA=675, QsBL=34_000, QlBL=4_000):
+        """
+        Variabl by-pass (VBP) to be used in Jupyter with widgets
+
+        Parameters
+        ----------
+        value       {"θS", "wI"}' type of value controlled
+        sp          set point for the controlled value
+        θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL
+                    given by widgets in Jupyter Lab
+
+        Returns
+        -------
+        None.
+        """
+        """
+        value='θS'
+
+        <=4================================4============================
+                ||                         m                          ||
+                4 (m-mo) =======0=======                              ||
+                ||    M  ||  (1-β)m   ||    C            S         I  ||
+        θo,φo=>[MX1]==0==||          [MX2]==2==[HC]==F===3==>[TZ]==4==||
+         mo              ||         s ||        /   /    |    //      |
+                         ===0=[CC]==1===       s   m     |   sl       |
+                              /\\   βm         |         |   ||       |
+                             t  sl  |          |         |  [BL]<-mi  |
+                             |      |          |         |  //        |
+                             |      |          |         | sl         |
+                             |      |          |         |            |
+                             |      |<-------- | -----ls-|<-θSsp      |
+                             |                 |<-----[K]-------------|<-wI
+                             |<-----------------------[K]-------------|<-θI
+
+
+        value='φ5' (KwI = 0)
+
+        <=4================================4============================
+                ||                         m                          ||
+                4 (m-mo) =======0=======                              ||
+                ||    M  ||  (1-β)m   ||    C            S         I  ||
+        θo,φo=>[MX1]==0==||          [MX2]==2==[HC]==F===3==>[TZ]==4==||
+         mo              ||         s ||        /   /         //      |
+                         ===0=[CC]==1===       s   m         sl       |
+                              /\\   βm         |             ||       |
+                             t  sl  |          |            [BL]<-mi  |
+                             |      |          |            //        |
+                             |      |          |           sl         |
+                             |      |          |                      |
+                             |      |<-------- | ------ls-------------|<-φI
+                             |                 |<-----[K]-------------|<-wI
+                             |<-----------------------[K]-------------|<-θI
+        """
+        # Design values
+        self.actual[5:] = θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL
+
+        x = self.β_ls(value, sp)
+        print('m = {m: .3f} kg/s, mo = {mo: .3f} kg/s, β = {β: .3f}'.format(
+            m=self.actual[0], mo=self.actual[1], β=self.actual[2]))
+        self.psy_chart(x, θo, φo)
+
+        return x
+
+    def VAV_wd(self, value='θ4', sp=14, θo=32, φo=0.7, θ5sp=24, φ5sp=0.5,
+               mi=0.90, UA=690, QsBL=18_000, QlBL=2_500):
         """
         Variable air volume (VAV) to be used in Jupyter with widgets
 
@@ -545,7 +623,7 @@ class MxCcRhTzBl:
         ----------
         value       {"θS", "wI"}' type of value controlled
         sp          set point for the controlled value
-        θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla
+        θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL
                     given by widgets in Jupyter Lab
 
         Returns
@@ -591,119 +669,55 @@ class MxCcRhTzBl:
 
         """
         # Design values
-        self.actual[5:] = θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla
+        self.actual[5:] = θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL
 
         x = self.m_ls(value, sp)
-        print('m = {m: .3f} kg/s, mo = {mo: .3f} kg/s'.format(
-            m=self.actual[0], mo=self.actual[1]))
-        self.psy_chart(x, θo, φo)
-
-    def VBP_wd(self, value='θS', sp=18, θo=32, φo=0.5, θIsp=24, φIsp=0.5,
-               mi=1.35, UA=675, Qsa=34_000, Qla=4_000):
-        """
-        Variabl by-pass (VBP) to be used in Jupyter with widgets
-
-        Parameters
-        ----------
-        value       {"θS", "wI"}' type of value controlled
-        sp          set point for the controlled value
-        θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla
-                    given by widgets in Jupyter Lab
-
-        Returns
-        -------
-        None.
-        """
-        """
-        value='θS'
-
-        <=4================================4============================
-                ||                         m                          ||
-                4 (m-mo) =======0=======                              ||
-                ||    M  ||  (1-β)m   ||    C            S         I  ||
-        θo,φo=>[MX1]==0==||          [MX2]==2==[HC]==F===3==>[TZ]==4==||
-         mo              ||         s ||        /   /    |    //      |
-                         ===0=[CC]==1===       s   m     |   sl       |
-                              /\\   βm         |         |   ||       |
-                             t  sl  |          |         |  [BL]<-mi  |
-                             |      |          |         |  //        |
-                             |      |          |         | sl         |
-                             |      |          |         |            |
-                             |      |<-------- | -----ls-|<-θSsp      |
-                             |                 |<-----[K]-------------|<-wI
-                             |<-----------------------[K]-------------|<-θI
-
-
-        value='φI' (KwI = 0)
-
-        <=4================================4============================
-                ||                         m                          ||
-                4 (m-mo) =======0=======                              ||
-                ||    M  ||  (1-β)m   ||    C            S         I  ||
-        θo,φo=>[MX1]==0==||          [MX2]==2==[HC]==F===3==>[TZ]==4==||
-         mo              ||         s ||        /   /         //      |
-                         ===0=[CC]==1===       s   m         sl       |
-                              /\\   βm         |             ||       |
-                             t  sl  |          |            [BL]<-mi  |
-                             |      |          |            //        |
-                             |      |          |           sl         |
-                             |      |          |                      |
-                             |      |<-------- | ------ls-------------|<-φI
-                             |                 |<-----[K]-------------|<-wI
-                             |<-----------------------[K]-------------|<-θI
-        """
-        # Design values
-        self.actual[5:] = θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla
-
-        x = self.β_ls(value, sp)
         print('m = {m: .3f} kg/s, mo = {mo: .3f} kg/s, β = {β: .3f}'.format(
             m=self.actual[0], mo=self.actual[1], β=self.actual[2]))
         self.psy_chart(x, θo, φo)
 
-        return x
-
 
 # TESTS: uncomment
-# Recyclage p. 6/19
-Kθ, Kw = 1e10, 0     # Kw can be 0
-β = 0
+#
+# Kθ, Kw = 1e10, 0     # Kw can be 0
+# β = 0
 
-m, mo = 3.093, 0.94179
-θo, φo = 32, 0.5
-θIsp, φIsp = 26, 0.5
+# m, mo = 3.093, 0.94179
+# θo, φo = 32, 0.5
+# θ5sp, φ5sp = 26, 0.5
 
-mi = 15e3 / (l * (psy.w(θo, φo) - psy.w(θIsp, φIsp)))   # kg/s
-UA = 45e3 / (θo - θIsp) - mi * c                        # W/K
-Qsa, Qla = 0, 0     # W
+# mi = 15e3 / (l * (psy.w(θo, φo) - psy.w(θ5sp, φ5sp)))   # kg/s
+# UA = 45e3 / (θo - θ5sp) - mi * c                        # W/K
+# QsBL, QlBL = 0, 0     # W
 
-print(f'QsTZ = {(UA + mi * c) * (θo - θIsp): ,.1f} W')
-print(f'QlTZ = {mi * l * (psy.w(θo, φo) - psy.w(θIsp, φIsp)): ,.1f} W')
+# print(f'QsTZ = {(UA + mi * c) * (θo - θ5sp): ,.1f} W')
+# print(f'QlTZ = {mi * l * (psy.w(θo, φo) - psy.w(θ5sp, φ5sp)): ,.1f} W')
 
-parameters = m, mo, β, Kθ, Kw
-inputs = θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla
-cool = MxCcRhTzBl(parameters, inputs)
+# parameters = m, mo, β, Kθ, Kw
+# inputs = θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL
+# cool = MxCcRhTzBl(parameters, inputs)
 
 # # 1. CAV
 # print('\nCAV: m given')
 # cool.CAV_wd()
-# cool.CAV_wd(θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla)
+# cool.CAV_wd(θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL)
 # # 2.
 # print('\nVAV: control θS')
 # θSsp = 11.45
 # # cool.VAV_wd('θS', θSsp)
-# cool.VAV_wd('θS', θSsp, θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla)
+# cool.VAV_wd('θS', θSsp, θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL)
 # # 3.
 # print('\nVAV: control φI')
-# cool.VAV_wd('φI', 0.5, θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla)
+# cool.VAV_wd('φ5', 0.5, θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL)
 # # 4.
 # print('\nVBP: control φI')
 # wIsp = psy.w(26, 0.5)
 # m = 3.5
 # cool.actual[0] = m
 # # cool.VBP_wd('wI', wIsp)
-φI = 0.4
-x = cool.VBP_wd('φI', φI, θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla)
-# # cool.VBP_wd('wI', wIsp, θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla)
+# φI = 0.4
+# x = cool.VBP_wd('φ5', φI, θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL)
+# # cool.VBP_wd('wI', wIsp, θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL)
 
 # """
 # Two solutions as a function of β0:
@@ -721,13 +735,13 @@ x = cool.VBP_wd('φI', φI, θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla)
 #     either m --> θS
 #     or θS --> m
 # """
-# # print('\nVBP: control θS')
-# # θSsp = 11.77
-# # m = 3.162
-# # cool.actual[0] = m
-# # cool.VBP_wd('θS', θSsp, θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla)
+# print('\nVBP: control θS')
+# θSsp = 11.77
+# m = 3.162
+# cool.actual[0] = m
+# cool.VBP_wd('θS', θSsp, θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL)
 
 
 # Kw = 1e10
 # cool.actual[4] = Kw
-# cool.CAV_wd(θo, φo, θIsp, φIsp, mi, UA, Qsa, Qla)
+# cool.CAV_wd(θo, φo, θ5sp, φ5sp, mi, UA, QsBL, QlBL)

@@ -9,6 +9,15 @@ v(t, r)     specific volume
 
 """
 import numpy as np
+# Constants
+Mv = 18.015_286             # [kg/kmol] vapor molaire mass
+Mda = 28.966                # [kg/kmol] air molaire mass
+R = 8_314.462_618_153_24    # [J/(kmol*K)] ideal gaz constant
+
+
+def p(Z):
+    # Atmospheric pressure function of altitude (-500 .. 10000 m):
+    return 101325 * (1 - 2.25577e-5 * Z)**5.2559     # [Pa]
 
 
 def pvs(t):
@@ -18,56 +27,35 @@ def pvs(t):
     """
     import numpy as np
     T = t + 273.15      # [K] Temperature
-    # pws(T) saturation pressure over liquid water
+    # pws(T) [Pa] saturation pressure over liquid water
     # for temp range [0 200] °C eq. (6)
-    C8 = -5.8002206e3
-    C9 = 1.3914993e0
-    C10 = -4.8640239e-2
-    C11 = 4.1764768e-5
-    C12 = -1.4452093e-8
-    C13 = 6.5459673e0
-    y = np.exp(C8/T + C9 + C10*T + C11*T**2 + C12*T**3 + C13*np.log(T))  # Pa
-    return y
-
-
-def v(t, w, Z=0):
-    """
-    Specific volum as a function of température and humidity ratio
-    for a given altitude (default 0 m)
-    t : temperature [°C]
-    w : humidity ratio [kg/kg_da]
-    Z : altitude [m]; default value = 0
-    """
-    Mv = 18.01528       # [kg/kmol] vapor molaire mass
-    Mda = 28.9645       # [kg/kmol] air molaire mass
-    R = 8320            # [J/(kmol*K)] ideal gaz constant
-
-    # Static pressure function of altitude;
-    p = 101325*(1 - 2.25577e-5 * Z)**5.2559     # [Pa]
-    v = R/Mv*(Mv/Mda + w)*(t + 273.15)/p
-    return v
+    C8 = -5.800_220_6e3
+    C9 = 1.391_499_3e0
+    C10 = -4.864_023_9e-2
+    C11 = 4.176_476_8e-5
+    C12 = -1.445_209_3e-8
+    C13 = 6.545_967_3e0
+    pws = np.exp(
+        C8 / T + C9 + C10 * T + C11 * T**2 + C12 * T**3 + C13 * np.log(T))
+    return pws
 
 
 def w(t, phi, Z=0):
     """
-    Humidity ratio as function of temperature and relative humidity
+    Humidity ratio as a function of temperature and relative humidity
     t : temperature [°C]
     phi : relative humidity [-]
     Z : altitude [m]; default value = 0
     """
-    phi = phi       # psi [-]
-    Mv = 18.01528       # [kg/kmol] vapor molaire mass
-    Mda = 28.9645       # [kg/kmol] air molaire mass
-
-    # Static pressure function of altitude;
-    p = 101325*(1 - 2.25577e-5 * Z)**5.2559     # [Pa]
-    w = Mv/Mda*phi*pvs(t)/(p - phi*pvs(t))
+    w = Mv / Mda * phi * pvs(t) / (p(Z) - phi * pvs(t))
     return w
 
 
-def wsp(ts, p=101325):
+def wsp(ts, Z=0):
     """
     Derivative of the saturation curve for temperature ts
+    wsp = Humidity ratio (w) at saturation (s) - derivative (prime)
+
     Parameters
     ----------
     ts : temperature on saturation curve [°C]
@@ -76,14 +64,31 @@ def wsp(ts, p=101325):
     Returns
     -------
     wsp : value of the derivative of the function w(ts) Tetens eq.
-    https://en.wikipedia.org/wiki/Tetens_equation
+
+    Murray F.W. (1967) On the computation of saturation vapour pressure.
+    J. Applied Meteorology 6: 203-204
     """
-    Mv = 18.01528       # [kg/kmol] vapor molaire mass
-    Mda = 28.9645       # [kg/kmol] air molaire mass
-    exp_t = np.exp(17.2694*ts/(ts + 238.3))
+    # equilibrum pressure at saturation eq.(6)
+    a = 17.2693882
+    b = 273.16 - 35.86
+    C = 610.78
+    es = C * np.exp(a * ts / (ts + b))
     # ws = Mv/Mda*610.78*exp_t/(p - 610.78*exp_t)
-    wp = Mv/Mda*p*2.51354e6*exp_t/((ts + 238.3)**2*(p - exp_t)**2)
+    wp = Mv / Mda * a * b * p(Z) * es / (
+        (ts + b)**2 * (p(Z) - es)**2)
     return wp
+
+
+def v(t, w, Z=0):
+    """
+    Specific volume as a function of température and humidity ratio
+    for a given altitude (default 0 m)
+    t : temperature [°C]
+    w : humidity ratio [kg/kg_da]
+    Z : altitude [m]; default value = 0
+    """
+    v = R / Mv * (Mv / Mda + w) * (t + 273.15) / p(Z)
+    return v
 
 
 def chart(t, w,
@@ -118,7 +123,7 @@ def chart(t, w,
         w4t = psy.w(t_range, phi)
         plt.plot(t_range, w4t, linewidth=0.5)
         s_phi = "%3.0f" % phi
-        ax.annotate(s_phi+' %', xy=(t_range[-1]-3, w4t[-1]))
+        ax.annotate(s_phi + ' %', xy=(t_range[-1] - 3, w4t[-1]))
 
     plt.plot(t, w, linewidth=3)    # processes
     return None
@@ -165,9 +170,9 @@ def chartA(t, wv, A,
     for phi in np.arange(0, 1, 0.2):
         w4t = psy.w(t_range, phi)
         plt.plot(t_range, w4t, linewidth=0.5)
-        phi100 = phi*100
+        phi100 = phi * 100
         s_phi = "%3.0f" % phi100
-        ax.annotate(s_phi+' %', xy=(t_range[-1]-3, w4t[-1]))
+        ax.annotate(s_phi + ' %', xy=(t_range[-1] - 3, w4t[-1]))
 
     for k in range(0, A.shape[0]):
         tk = np.nonzero(A[k, :])
