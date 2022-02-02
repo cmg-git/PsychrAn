@@ -1,27 +1,17 @@
 name: example-environment
 
 channels:
-
   - conda-forge
 
 dependencies:
-
   - python
-
   - numpy
-  
   - scipy
-
+  - voila==0.2.6
   - pip
-
   - pip:
-
     - nbgitpuller
-
     - sphinx-gallery
-
     - pandas
-
-    - matplotlib
-    
+    - matplotli
     - scipy
